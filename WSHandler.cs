@@ -5,10 +5,6 @@ using System.Numerics;
 using System.Text;
 
 namespace razor {
-    class NewSpeedData {
-        public Vector2 Speed {get; set;} 
-        public string Token {get; set;}
-    }
     class WSHandler {
         public static string Path = "/ws";
         public readonly Game game;
@@ -38,8 +34,10 @@ namespace razor {
                 while (true) {
                     var result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
                     var message = Encoding.ASCII.GetString(buffer, 0, result.Count);
-                    var newData = JSON.Parse<NewSpeedData>(message);
-                    game.SetSpeed(newData.Token, newData.Speed);
+                    var newData = JSON.Parse<ActionData>(message);
+                    if (newData != null) {
+                        game.SetActions(newData);
+                    }
                 }
             } catch (Exception ex) {
                 Console.WriteLine(ex.Message);

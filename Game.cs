@@ -18,9 +18,11 @@ namespace razor {
                 }
             }
         }
-        public void SetSpeed(string token, Vector2 newSpeed) {
-            tokenLookup.TryGetValue(token, out int index);
-            metadata.Players[index].Speed = newSpeed;
+        public void SetActions(ActionData action) {
+            var res = tokenLookup.TryGetValue(action.Token, out int index);
+            if (!res) return;
+
+            metadata.ApplyAction(action.Actions, index);
         }
         public (string, int) GenerateToken() {
             if (tokenLookup.Count >= metadata.NumberOfPlayers) return ("", -1);

@@ -22,7 +22,7 @@
 </div>
 <div class="ws-body">
     @if (!isLoading) {
-    <div id="game" style=@GetGameBoxStyles() @onclick="HandleClick">
+    <div id="game" style=@GetGameBoxStyles()>
         @foreach (var styles in GetPlayersStyles()) {
             <div style=@styles></div>
         }
@@ -31,10 +31,17 @@
 </div>
 
 @code {
+    private DotNetObjectReference<Home> dotNetRef;
     private ClientWebSocket websocket;
     private HttpClient http;
     private GameData gameData;
     private string token;
+    private Dictionary<Actions, bool> actions = new() {
+        {Actions.ROTATE_LEFT, false},
+        {Actions.ROTATE_RIGHT, false},
+        {Actions.ACCELERATE, false},
+        {Actions.DECELERATE, false},
+    };
     private int index;
     private bool isLoading = true;
     private bool isUpdating = false;
@@ -42,24 +49,58 @@
     private void ClearMessages() {
         StateHasChanged();
     }
-    private async Task HandleClick(MouseEventArgs e) {
+    [JSInvokable]
+    public async Task OnKeyDown(string key) {
+        switch (key) {
+            case "w": {
+                actions[Actions.ACCELERATE] = true;
+                break;
+            }
+            case "a": {
+                actions[Actions.ROTATE_LEFT] = true;
+                break;
+            }
+            case "s": {
+                actions[Actions.DECELERATE] = true;
+                break;
+            }
+            case "d": {
+                actions[Actions.ROTATE_RIGHT] = true;
+                break;
+            }
+        }
+    }
+    [JSInvokable]
+    public async Task OnKeyUp(string key) {
+        switch (key) {
+            case "w": {
+                actions[Actions.ACCELERATE] = false;
+                break;
+            }
+            case "a": {
+                actions[Actions.ROTATE_LEFT] = false;
+                break;
+            }
+            case "s": {
+                actions[Actions.DECELERATE] = false;
+                break;
+            }
+            case "d": {
+                actions[Actions.ROTATE_RIGHT] = false;
+                break;
+            }
+        }
+    }
+    private async Task HandleActions() {
         Vector2 newSpeed;
-        var elementRect = await JSRuntime.InvokeAsync<ElementRect>("GetBoundingBoxByID", "game");
-        var mouseX = (float)(e.ClientX - elementRect.Left);
-        var mouseY = (float)(e.ClientY - elementRect.Top);
+        ActionData action = new() {Token = token, Actions = actions};
 
         lock (gameData) {
-            var clickDirection = Vector2.Normalize(new Vector2(mouseX, mouseY) - gameData.Players[index].Position);
-            var magnitude = gameData.Players[index].Speed.Length();
-            
-            var newDirection = clickDirection + Vector2.Normalize(gameData.Players[index].Speed);
-            newSpeed = Vector2.Normalize(newDirection) * magnitude; 
-            
-            gameData.Players[index].Speed = newSpeed;
+            gameData.ApplyAction(action.Actions, index);
+            StateHasChanged();
         }
         
-        var data = new NewSpeedData { Speed = newSpeed, Token = token };
-        var json = JSON.Stringify(data);
+        var json = JSON.Stringify(action);
         var bytes = Encoding.ASCII.GetBytes(json);
 
         await websocket.SendAsync(bytes, WebSocketMessageType.Text, true, CancellationToken.None);
@@ -67,13 +108,20 @@
     private List<string> GetPlayersStyles() {
         var playersStyle = new List<string>(gameData.Players.Count);
         foreach (var player in gameData.Players) {
+            var angle = Math.Atan2(player.SpeedDirection.Y, player.SpeedDirection.X) * (180 / Math.PI);
             var styles = new List<string> {
                 "position: absolute",
                 $"top: {player.Position.Y}px",
                 $"left: {player.Position.X}px",
                 "background-color: black",
-                "width: 10px",
-                "height: 10px"
+                "width: 0",
+                "height: 0",
+                "border-left: 10px solid white",
+                "border-right: 10px solid white",
+                "border-bottom: 20px solid black",
+                $"transform: rotate({angle + 90}deg)",
+                "transform-origin: center",
+                "will-change: transform"
             };
             playersStyle.Add(string.Join(';', styles));
         }
@@ -92,6 +140,9 @@
     }
     protected override async Task OnAfterRenderAsync(bool firstRender) {
         if (!firstRender) return;
+
+        dotNetRef = DotNetObjectReference.Create(this);
+        await JSRuntime.InvokeVoidAsync("keyPressHandler.initialize", dotNetRef);
 
         error = null;
         isLoading = true;
@@ -167,6 +218,7 @@
     private async Task Loop() {
         while (true) {
             await Task.Delay(Constants.gameThreadWaitTime);
+            await HandleActions();
             lock (gameData) {
                 for (int i = 0; i < gameData.Players.Count; i++) {
                     gameData.Players[i].UpdateSelf(Constants.gameThreadWaitTime / 1000);
@@ -180,5 +232,6 @@
             await websocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Component disposed", CancellationToken.None);
         }
         websocket?.Dispose();
+        dotNetRef?.Dispose();
     }
 }

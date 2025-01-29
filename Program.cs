@@ -31,7 +31,7 @@ var options = new WebSocketOptions() {
 };
 app.UseWebSockets(options);
 
-var game = new Game(2, 600, 800);
+var game = new Game(2, 800, 1800);
 
 var endpoints = new Endpoints(game);
 
