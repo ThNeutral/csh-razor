@@ -1,5 +1,4 @@
 using System.Net.WebSockets;
-using System.Numerics;
 using razor;
 using razor.Components;
 
@@ -8,7 +7,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
-builder.WebHost.UseUrls(["http://localhost:5168"]);
+builder.WebHost.UseUrls([Constants.BASE_HTTP_URL]);
 
 builder.Services.AddScoped<HttpClient>();
 builder.Services.AddScoped<ClientWebSocket>();
@@ -22,7 +21,7 @@ if (!app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-app.UseStatusCodePagesWithRedirects("/not-found");
+app.UseStatusCodePagesWithRedirects(Constants.NOT_FOUND_PAGE_PATH);
 
 app.UseAntiforgery();
 
@@ -31,19 +30,15 @@ var options = new WebSocketOptions() {
 };
 app.UseWebSockets(options);
 
-var game = new Game(2, 800, 1800);
-
-var endpoints = new Endpoints(game);
-
-app.MapGet(WSHandler.Path, endpoints.wshandler.Handler);
-app.MapGet(Endpoints.MetadataPath, endpoints.GetMetadata);
-app.MapFallback(endpoints.HandleNotFound);
+app.Use(AuthService.Instance.Middleware);
+app.Use(WebSocketService.Instance.Middleware);
 
 app.MapStaticAssets();
-app.MapRazorComponents<App>()
-    .AddInteractiveServerRenderMode();
 
-Task.Run(game.Run);
-Task.Run(endpoints.wshandler.Run);
+app.MapGet(Constants.REGISTRATION_PATH, EndpointsService.Instance.GetRegistrationHandler);
+app.MapGet(Constants.GAME_METADATA_PATH, EndpointsService.Instance.GetGameMetadataHandler);
+app.MapGet(Constants.GAME_STATE_PATH, EndpointsService.Instance.GetGameStateHandler);
 
-app.Run();
+app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
+
+await Task.WhenAll([app.RunAsync(), WebSocketService.Instance.Loop(), GameService.Instance.Loop()]);

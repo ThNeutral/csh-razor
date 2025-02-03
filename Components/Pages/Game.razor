@@ -1,0 +1,138 @@
+@using System.Net
+@using System.Net.WebSockets
+@using System.Text
+
+@page "/"
+@rendermode InteractiveServer
+@inject ClientWebSocket WebSocket
+@inject HttpClient HTTP
+
+@if (error != null) {
+    <div>
+        @error
+    </div>
+}
+@if (!isLoading) {
+    <div style=@GetGameBoxStyles()>
+        @foreach (var style in GetPlayersStyles()) {
+            <div style=@style/>
+        }
+    </div>
+}
+
+@code {
+    private DotNetObjectReference<Game>? reference;
+    private TokenData? tokenData;
+    private GameMetadata? gameMetadata;
+    private GameState? gameState;
+    private bool isLoading = true;
+    private string? error;
+    private string? body;
+    protected override async Task OnInitializedAsync() {
+        reference = DotNetObjectReference.Create(this); 
+        try {
+            var httpCancelationToken = new CancellationTokenSource(5000).Token;
+            var response = await HTTP.GetAsync(Constants.REGISTRATION_URI, httpCancelationToken);
+            var body = await response.Content.ReadAsStringAsync();
+            if (response.StatusCode != HttpStatusCode.Created) {
+                error = $"{response.StatusCode} {body}";
+                StateHasChanged();
+                return;
+            }
+            tokenData = JSON.Parse<TokenData>(body);
+            if (!tokenData.HasValue) throw new ArgumentException($"Failed to parse {nameof(TokenData)} response from {Constants.REGISTRATION_URI.AbsoluteUri}");
+            HTTP.DefaultRequestHeaders.Add(Constants.TOKEN_HEADER_NAME, tokenData.Value.Token);
+            
+            httpCancelationToken = new CancellationTokenSource(5000).Token;
+            response = await HTTP.GetAsync(Constants.GAME_METADATA_URI, httpCancelationToken);
+            body = await response.Content.ReadAsStringAsync();
+            if (response.StatusCode != HttpStatusCode.OK) {
+                error = $"{response.StatusCode} {body}";
+                StateHasChanged();
+                return;
+            }
+            gameMetadata = JSON.Parse<GameMetadata>(body);
+            if (!gameMetadata.HasValue) throw new ArgumentException($"Failed to parse {nameof(GameMetadata)} response from {Constants.REGISTRATION_URI.AbsoluteUri}");
+            
+            httpCancelationToken = new CancellationTokenSource(5000).Token;
+            response = await HTTP.GetAsync(Constants.GAME_STATE_URI, httpCancelationToken);
+            body = await response.Content.ReadAsStringAsync();
+            if (response.StatusCode != HttpStatusCode.OK) {
+                error = $"{response.StatusCode} {body}";
+                StateHasChanged();
+                return;
+            }
+            gameState = JSON.Parse<GameState>(body);
+            if (gameState == null) throw new ArgumentException($"Failed to parse {nameof(GameMetadata)} response from {Constants.REGISTRATION_URI.AbsoluteUri}");
+
+            isLoading = false;
+            StateHasChanged();
+        } catch (Exception ex) {
+            error = $"Request failed {ex.Message}";
+        }
+    }
+    protected override async Task OnAfterRenderAsync(bool firstRender) {
+        if (!firstRender) return;
+
+        await WebSocket.ConnectAsync(Constants.WS_HUB_URI, CancellationToken.None);
+        await HandleWebsocket();  
+    }
+    private async Task HandleWebsocket() {
+        try {
+            var buffer = new byte[4 * 1024];
+            while (true) {
+                var result = await WebSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+                if (result.MessageType == WebSocketMessageType.Close) {
+                    break;
+                }
+                var message = Encoding.ASCII.GetString(buffer, 0, result.Count);
+                gameState = JSON.Parse<GameState>(message);
+                StateHasChanged();
+            }
+        } catch (Exception) {
+            error = "WebSocket has failed";
+        } finally {
+            try {
+                await WebSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Normal Closure", CancellationToken.None);
+            } catch {}
+        }
+    }
+    private async Task HandleLoop() {
+        @* if (gameState == null) throw new ArgumentException($"Expected {nameof(GameState)} to has value while calling {nameof(HandleLoop)}");
+        await gameState.Loop(); *@
+    }
+    private string GetGameBoxStyles() {
+        if (!gameMetadata.HasValue) throw new ArgumentException($"Expected {nameof(GameMetadata)} to has value while calling {nameof(GetGameBoxStyles)}");
+        var style = new List<string> {
+            "position: absolute",
+            $"width: {gameMetadata.Value.Width}px",
+            $"height: {gameMetadata.Value.Height}px",
+            "border: 1px solid black",
+            "overflow: hidden"
+        };
+        return string.Join("; ", style);
+    }
+    private List<string> GetPlayersStyles() {
+        if (!gameMetadata.HasValue) throw new ArgumentException($"Expected {nameof(GameMetadata)} to has value while calling {nameof(GetGameBoxStyles)}");
+        if (gameState == null) throw new ArgumentException($"Expected {nameof(GameState)} to has value while calling {nameof(GetGameBoxStyles)}");
+        var styles = new List<string>(gameMetadata.Value.NumberOfPlayers);
+        for (int i = 0; i < gameMetadata.Value.NumberOfPlayers; i++) {
+            var position = gameState.objects[i].Transform.Position;
+            styles.Add(string.Join("; ", new List<string> {
+                "position: absolute",
+                $"top: {position.X}px",
+                $"left: {position.Y}px",
+                "background-color: black",
+                "width: 0",
+                "height: 0",
+                "border-left: 10px solid white",
+                "border-right: 10px solid white",
+                "border-bottom: 20px solid black",
+                $"transform: rotate({90}deg)",
+                "transform-origin: center",
+                "will-change: transform"
+            }));
+        }
+        return styles;
+    }
+}
